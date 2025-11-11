@@ -1,0 +1,50 @@
+# Conteúdo do Dockerfile
+# Stage 1: Builder - Instala dependências e compila o código
+FROM php:8.2-fpm-alpine AS builder
+
+# Instalação de dependências do sistema e extensões PHP essenciais
+RUN apk add --no-cache git openssh-client libpng libjpeg-turbo libwebp freetype icu libzip-dev nodejs npm \
+    && docker-php-ext-install pdo_mysql bcmath gd intl opcache zip
+
+# Instala Composer 2.x
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www/html
+
+# Copia o código da aplicação
+COPY..
+
+# Executa Composer (dependências PHP)
+RUN composer install --optimize-autoloader --no-dev --no-scripts --prefer-dist
+
+# Executa NPM (dependências JS/Vue.js)
+RUN npm install && npm run prod
+
+# Configuração de Permissões
+RUN chown -R www-data:www-data /var/www/html 
+RUN chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+
+# Stage 2: Production Image - Imagem final
+FROM php:8.2-fpm-alpine
+
+# Instala Supervisord (necessário apenas para o serviço worker)
+RUN apk add --no-cache supervisor netcat-openbsd # netcat é usado no entrypoint para esperar o DB
+
+WORKDIR /var/www/html
+
+# Copia arquivos do stage de build
+COPY --from=builder /var/www/html /var/www/html
+
+# Adiciona script de entrypoint e config do worker
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Cria um diretório de configuração para o worker
+RUN mkdir -p /etc/supervisor/conf.d/
+COPY.configs/worker.conf /etc/supervisor/conf.d/worker.conf
+
+# Permissões finais
+RUN chown -R www-data:www-data /var/www/html 
+
+# Comando para o serviço 'app'
+CMD ["php-fpm"]

@@ -1,0 +1,106 @@
+# Conteúdo do docker-compose.yml
+version: '3.8'
+
+services:
+  # 1. SERVIÇO DATABASE (MySQL 8.0)
+  database:
+    image: mysql:8.0
+    container_name: krayin_database
+    restart: always
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_DATABASE: krayindb
+      MYSQL_USER: krayinuser
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - krayin_db_data:/var/lib/mysql/
+    networks:
+      - krayin_network
+
+  # 2. SERVIÇO REDIS (Cache e Queue Broker)
+  redis:
+    image: redis:alpine
+    container_name: krayin_redis
+    restart: always
+    networks:
+      - krayin_network
+
+  # 3. SERVIÇO APLICAÇÃO WEB (PHP-FPM)
+  app:
+    build:
+      context:. 
+      dockerfile: Dockerfile
+    container_name: krayin_app
+    restart: always
+    # CRÍTICO: Este script automatiza a instalação do Krayin CRM
+    entrypoint: /usr/local/bin/entrypoint.sh 
+    environment:
+      APP_ENV: production
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_URL: ${APP_URL} 
+      
+      DB_CONNECTION: mysql
+      DB_HOST: database # Hostname interno
+      DB_PORT: 3306
+      DB_DATABASE: krayindb
+      DB_USERNAME: krayinuser
+      DB_PASSWORD: ${DB_PASSWORD}
+      
+      CACHE_DRIVER: redis
+      SESSION_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      REDIS_HOST: redis # Hostname interno
+      REDIS_PORT: 6379
+
+      MAIL_MAILER: ${MAIL_MAILER}
+      MAIL_HOST: ${MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+
+      # Credenciais de Administrador para Instalação Não Interativa
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      
+    volumes:
+      # Persistência do storage (uploads, logs, views cache)
+      - krayin_app_storage:/var/www/html/storage
+      
+    ports:
+      - 80:80 # Exposição para o proxy reverso do Coolify
+    depends_on:
+      - database
+      - redis
+    networks:
+      - krayin_network
+
+  # 4. SERVIÇO WORKER (Processador de Filas)
+  worker:
+    build:
+      context:.
+      dockerfile: Dockerfile
+    container_name: krayin_worker
+    restart: always
+    command: /usr/bin/supervisord -c /etc/supervisor/conf.d/worker.conf
+    stop_grace_period: 60s 
+    environment:
+      APP_ENV: production
+      DB_HOST: database 
+      REDIS_HOST: redis
+      QUEUE_CONNECTION: redis
+    depends_on:
+      - app 
+    networks:
+      - krayin_network
+
+networks:
+  krayin_network:
+    driver: bridge
+
+volumes:
+  krayin_db_data:
+    name: krayin_db_data_volume
+  krayin_app_storage:
+    name: krayin_app_storage_volume
